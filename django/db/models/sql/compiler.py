@@ -265,14 +265,19 @@ class SQLCompiler(object):
         qn2 = self.connection.ops.quote_name
         aliases = set()
         only_load = self.deferred_to_columns()
-        seen = self.query.included_inherited_models.copy()
-        if start_alias:
-            seen[None] = start_alias
+        if not start_alias:
+            start_alias = self.query.get_initial_alias()
+        # The 'seen_models' is used to optimize checking the needed parent
+        # alias for a given field. This also includes None -> start_alias to
+        # be used by local fields.
+        seen_models = {None: start_alias}
+
         for field, model in opts.get_fields_with_model():
             if from_parent and model is not None and issubclass(from_parent, model):
                 # Avoid loading data for already loaded parents.
                 continue
-            alias = self.query.join_parent_model(opts, model, start_alias, seen)
+            alias = self.query.join_parent_model(opts, model, start_alias,
+                                                 seen_models)
             table = self.query.alias_map[alias].table_name
             if table in only_load and field.column not in only_load[table]:
                 continue
@@ -620,7 +625,7 @@ class SQLCompiler(object):
 
             alias = self.query.join((alias, table, f.column,
                     f.rel.get_related_field().column),
-                    promote=promote, join_field=f)
+                    outer_if_first=promote, join_field=f)
             columns, aliases = self.get_default_columns(start_alias=alias,
                     opts=f.rel.to._meta, as_pairs=True)
             self.query.related_select_cols.extend(
@@ -648,7 +653,7 @@ class SQLCompiler(object):
                 table = model._meta.db_table
                 alias = self.query.join(
                     (alias, table, f.rel.get_related_field().column, f.column),
-                    promote=True, join_field=f
+                    outer_if_first=True, join_field=f
                 )
                 from_parent = (opts.model if issubclass(model, opts.model)
                                else None)
